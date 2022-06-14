@@ -1,9 +1,90 @@
+use core::panic;
+
 use crate::bit_operations;
-use crate::board::BoardData;
+use crate::board::{BoardData};
 
 impl BoardData {
-    fn to_fen(&self) -> String {
-        unimplemented!()
+    pub fn to_fen(&self) -> String {
+        // main fen string
+        let mut fen_list = Vec::new();
+        // a row
+        let mut so_far_string = String::new();
+        let mut counter = 0;
+        for i in 0..64 {
+            if i % 8 == 0 {
+                if counter != 0 {
+                    so_far_string += &counter.to_string();
+                }
+                fen_list.push(so_far_string.clone());
+                so_far_string.clear();
+                counter = 0;
+            }
+            let pval = match self.mailbox[i] {
+                0 => "K",
+                1 => "Q",
+                2 => "B",
+                3 => "N",
+                4 => "R",
+                5 => "P",
+
+                6 => "k",
+                7 => "q",
+                8 => "b",
+                9 => "n",
+                10 => "r",
+                11 => "p",
+                _ => {
+                    counter += 1;
+                    ""
+                }
+            };
+
+            // there were some number of gaps, which culminated in a piece
+            if counter != 0 && !pval.is_empty() {
+                so_far_string += &counter.to_string();
+                counter = 0
+            }
+            so_far_string += pval;
+            
+        }
+        // since it never gets to 64 it will never get pushed
+        fen_list.push(so_far_string);
+       
+        let mut val = fen_list.iter().rev().fold(fen_list[0].clone(), |a, b| a + "/" + b);
+        // remove slashes at beginning and end
+        val.pop();
+        val.remove(0);
+
+        let tomove = if self.is_white_move {"w"} else {"b"};
+        let passant = match self.passant_square {
+            Some(sqr) => idx_to_coordsquare(sqr),
+            None => String::from("-"),
+        };
+
+        let castlemask = match self.castle_rights_mask {
+            0b1111 => "KQkq",
+            0b0000 => "-",
+            0b1110 => "KQk",
+            0b1101 => "KQq",
+            0b1011 => "Kkq",
+            0b0111 => "Qkq",
+            0b1100 => "KQ",
+            0b0011 => "kq",
+            0b1001 => "Kq",
+            0b0110 => "Qk",
+            0b1010 => "Kk",
+            0b0101 => "Qq",
+            0b1000 => "K",
+            0b0100 => "Q",
+            0b0010 => "k",
+            0b0001 => "q",
+
+            _ => panic!("Invalid castle!"),
+        };
+
+        let move_counter = self.half_move_counter / 2;
+
+        format!("{} {} {} {} {} {}", val, tomove, castlemask, passant, move_counter, self.half_move_counter)
     }
 
     //prints out a board for debugging
@@ -41,7 +122,6 @@ impl BoardData {
             + &self.half_move_counter.to_string()
             + "\nPassant Square: "
             + &passantval.to_string()
-
     }
 }
 
@@ -166,4 +246,21 @@ fn sqr_to_index(square: &str) -> Option<u8> {
 
     let rank = char::to_digit(coords[1], 10).unwrap() - 1;
     Some((rank * 8 + file) as u8)
+}
+
+fn idx_to_coordsquare(idx: u8) -> String {
+    let rank = (idx >> 3) + 1;
+    let file = match idx & 7{
+        0 => "a",
+        1 => "b",
+        2 => "c",
+        3 => "d",
+        4 => "e",
+        5 => "f",
+        6 => "g",
+        7 => "h",
+        _ => panic!("Not a valid idx!")
+    };
+
+   format!("{}{}", file, rank)
 }
