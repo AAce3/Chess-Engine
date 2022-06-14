@@ -1,4 +1,3 @@
-# Deep Cyan
-A chess engine written in rust
+# Chess engine project
 
-Move generation is not entirely finished yet, so I'm working on that.
+Help me come up with names!
