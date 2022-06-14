@@ -9,4 +9,5 @@ edition = "2021"
 lazy_static = "1.4.0"
 
 [profile.dev]
+opt-level = 1
 overflow-checks = false
