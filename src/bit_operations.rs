@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-#![allow(unused_variables)]
-
 pub const NOT_A_FILE: u64 = !0x101010101010101;
 pub const NOT_H_FILE: u64 = !0x8080808080808080;
 
