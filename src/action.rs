@@ -3,7 +3,7 @@ use std::u8;
 
 use crate::{
     bit_operations::shifts::{set_0_at_index, set_1_at_index},
-    board::{pieces, BoardData, Squares},
+    board::{pieces, BoardData, Squares, ZOBRIST_TABLES},
 };
 
 /* == == == == == == == == == == == == == == == == == == == == == == == == == == ==
@@ -43,27 +43,27 @@ use crate::{
 |   [0]
 *
    == == == == == == == == == == == == == == == == == == == == == == == == == == ==  */
-type Action = u16;
+pub type Action = u16;
 
-mod actions {
+pub mod actions {
     use crate::action::Action;
     // move types
     pub const NORMAL: u16 = 0;
-    pub const CASTLE: u16 = 1 << 12;
-    pub const PROMOTION: u16 = 0b10 << 12;
-    pub const PASSANT: u16 = 0b11 << 12;
+    pub const CASTLE: u16 = 1;
+    pub const PROMOTION: u16 = 0b10;
+    pub const PASSANT: u16 = 0b11;
 
     pub const PR_QUEEN: u16 = 0;
-    pub const PR_KNIGHT: u16 = 0b01 << 14;
-    pub const PR_BISHOP: u16 = 0b10 << 14;
-    pub const PR_ROOK: u16 = 0b11 << 14;
+    pub const PR_KNIGHT: u16 = 0b01;
+    pub const PR_BISHOP: u16 = 0b10;
+    pub const PR_ROOK: u16 = 0b11;
 
-    fn create_action(move_from: u8, move_to: u8, move_type: u16, promote_to: u16) -> Action {
-        (move_from as u16) | ((move_to as u16) << 6) | move_type | promote_to
+    pub fn new(move_from: u8, move_to: u8, move_type: u16, promote_to: u16) -> Action {
+        (move_from as u16) | ((move_to as u16) << 6) | (move_type << 12) | (promote_to << 14)
     }
 }
 
-trait Move {
+pub trait Move {
     fn move_from(&self) -> u8;
 
     fn move_to(&self) -> u8;
@@ -92,7 +92,7 @@ impl Move for Action {
 }
 
 impl BoardData {
-    fn make_move(&mut self, action: Action) {
+    pub fn make_move(&mut self, action: Action) {
         let movefrom = action.move_from();
         let moveto = action.move_to();
         assert!(movefrom < 64);
@@ -102,34 +102,47 @@ impl BoardData {
         let mut savestate = StateData::new(self);
 
         // default actions are performed
-        // TODO: update zobrist key
         self.half_move_counter += 1;
-        self.passant_square = None;
+        // set the passant square to none in the zobrist key
+        self.zobrist_key ^= match self.passant_square {
+            None => 0,
+            Some(sqr) => (sqr & 7) as u64,
+        };
+
+        self.zobrist_key ^= ZOBRIST_TABLES.castling_rights[self.castle_rights_mask as usize];
+        // undos the castle mask
 
         match tag {
             actions::NORMAL => {
+                self.passant_square = None;
                 let movingpiece = self.mailbox[movefrom as usize];
                 let maybe_piececapture = self.mailbox[moveto as usize];
+
                 if maybe_piececapture != pieces::NOPIECE {
                     savestate.set_captured(maybe_piececapture); // a piece is captured, so the state must be saved
                     set_0_at_index(moveto, &mut self.bitboards[maybe_piececapture as usize]);
                     self.half_move_counter = 0; // a capture resets 50 move counter
                 }
+                //println!("Movefrom: {}, Moveto: {}", movefrom, moveto);
                 self.move_piece(movefrom, moveto);
 
                 // update the board data, with castle rights and en passant
-                // TODO: update zobrist key
                 match movingpiece {
                     pieces::WPAWN => {
                         if moveto - movefrom == 16 {
                             // it is a doublemove, so we update the possible en passant square
                             self.passant_square = Some(moveto - 8);
+                            // update zobrist key:
+                            self.zobrist_key ^=
+                                ZOBRIST_TABLES.passant_square[(moveto & 7) as usize];
                         }
                         self.half_move_counter = 0; // a pawn move resets hmc
                     }
                     pieces::BPAWN => {
                         if movefrom - moveto == 16 {
                             self.passant_square = Some(moveto + 8);
+                            self.zobrist_key ^=
+                                ZOBRIST_TABLES.passant_square[(moveto & 7) as usize];
                         }
                         self.half_move_counter = 0;
                     }
@@ -154,6 +167,7 @@ impl BoardData {
             }
 
             actions::PROMOTION => {
+                self.passant_square = None;
                 self.removepiece(movefrom);
                 let maybe_piececapture = self.mailbox[moveto as usize];
                 if maybe_piececapture != pieces::NOPIECE {
@@ -172,75 +186,64 @@ impl BoardData {
             }
 
             actions::CASTLE => {
-                let rookfrom: Squares;
-                let rookto: Squares;
+                self.passant_square = None;
+                let rookfrom: u8;
+                let rookto: u8;
                 match moveto {
                     6 => {
                         //g1
-                        rookfrom = Squares::h1;
-                        rookto = Squares::f1;
+                        rookfrom = 7;
+                        rookto = 5;
                     }
                     2 => {
                         //c1
-                        rookfrom = Squares::a1;
-                        rookto = Squares::d1;
+                        rookfrom = 0;
+                        rookto = 3;
                     }
                     62 => {
                         //g8
-                        rookfrom = Squares::h1;
-                        rookto = Squares::f1;
+                        rookfrom = 63;
+                        rookto = 61;
                     }
                     58 => {
-                        //f8
-                        rookfrom = Squares::a1;
-                        rookto = Squares::d1;
+                        //c8
+                        rookfrom = 56;
+                        rookto = 59;
                     }
                     _ => panic!("Invalid castle!"),
                 }
 
                 self.move_piece(movefrom, moveto);
-                self.move_piece(rookfrom as u8, rookto as u8);
+                self.move_piece(rookfrom, rookto);
+
                 let removemask: u8 = if self.to_move { 0b0011 } else { 0b1100 };
                 self.castle_rights_mask &= removemask;
-                // update zobrist key with castlemask
             }
             actions::PASSANT => {
-                let passantsq = match self.passant_square {
+                let mut passantsq = match self.passant_square {
                     Some(square) => square,
                     None => panic!("Invalid En Passant!"),
                 };
-
-                self.move_piece(movefrom, moveto);
+                if self.to_move {
+                    passantsq -= 8;
+                } else {
+                    passantsq += 8;
+                }
+                savestate.set_captured(self.mailbox[passantsq as usize]);
                 self.removepiece(passantsq);
+                
+                self.move_piece(movefrom, moveto);
                 self.half_move_counter = 0; // resets halfmove ctr, as it is a pawn move
             }
             _ => panic!("Not an available move!"),
         }
 
+        self.zobrist_key ^= ZOBRIST_TABLES.castling_rights[self.castle_rights_mask as usize];
         self.prev_states.push(savestate);
         self.to_move = !self.to_move;
     }
 
-    #[inline]
-    fn move_piece(&mut self, start_square: u8, end_square: u8) {
-        let moving_piece = self.mailbox[start_square as usize];
-        let moving_bitboard = &mut self.bitboards[moving_piece as usize];
-        set_0_at_index(start_square, moving_bitboard);
-        set_1_at_index(end_square, moving_bitboard);
-        self.mailbox[start_square as usize] = pieces::NOPIECE;
-        self.mailbox[end_square as usize] = moving_piece;
-
-        // update zobrist hash key by XOR with the moving piece at from square, then XOR with moving piece
-        // at to square
-    }
-
-    // having a specific function for captures should speed up quiescence search
-    pub fn do_capture(&mut self, action: Action) {
-        unimplemented!()
-    }
-
     pub fn undo_move(&mut self, action: Action) {
-        // reupdate zobrist
         let undo = match self.prev_states.pop() {
             Some(state) => state,
             None => return,
@@ -250,13 +253,33 @@ impl BoardData {
         let moveto = action.move_to();
         let tag = action.move_type();
 
-        self.move_piece(moveto, movefrom);
+        if tag != actions::PROMOTION {
+            self.move_piece(moveto, movefrom);
+        } else {
+            self.removepiece(moveto);
+            self.set_piece(
+                movefrom,
+                if !self.to_move { // self.move has been swapped. Therefore if it is blacks move it must have been
+                    // previously white's move
+                    pieces::WPAWN
+                } else {
+                    pieces::BPAWN
+                },
+            );
+        }
         if undo.captured_piece != pieces::NOPIECE && tag != actions::PASSANT {
             self.set_piece(moveto, undo.captured_piece);
         } else if tag == actions::PASSANT {
             match undo.passant_square {
                 None => panic!("en passant invalid!"),
-                Some(sqr) => self.set_piece(sqr, undo.captured_piece),
+                Some(sqr) => {
+                    let passantsq = if !self.to_move {
+                        sqr - 8
+                    } else {
+                        sqr + 8
+                    };
+                    self.set_piece(passantsq, undo.captured_piece)
+                },
             }
         } else if tag == actions::CASTLE {
             let rookfrom: Squares;
@@ -288,14 +311,34 @@ impl BoardData {
         }
 
         undo.set_self(self); // resets board data
+        self.to_move = !self.to_move
     }
 
-    // will remove the piece currently at the index
+    #[inline]
+    fn move_piece(&mut self, start_square: u8, end_square: u8) {
+        let moving_piece = self.mailbox[start_square as usize];
+        let moving_bitboard = &mut self.bitboards[moving_piece as usize];
+
+        set_0_at_index(start_square, moving_bitboard);
+        set_1_at_index(end_square, moving_bitboard);
+        self.mailbox[start_square as usize] = pieces::NOPIECE;
+        self.mailbox[end_square as usize] = moving_piece;
+
+        self.zobrist_key ^=
+            ZOBRIST_TABLES.piecesquares[start_square as usize][moving_piece as usize];
+        self.zobrist_key ^= ZOBRIST_TABLES.piecesquares[end_square as usize][moving_piece as usize];
+    }
+
+    // having a specific function for captures should speed up quiescence search
+    pub fn do_capture(&mut self, action: Action) {
+        unimplemented!()
+    }
+    // DONT USE IF THERES A PIECE ALREADY AT THE INDEX
     #[inline]
     fn set_piece(&mut self, square: u8, piece: u8) {
         self.mailbox[square as usize] = piece;
         set_1_at_index(square, &mut self.bitboards[piece as usize]);
-        // update zobrist key by XOR with set piece
+        self.zobrist_key ^= ZOBRIST_TABLES.piecesquares[square as usize][piece as usize];
     }
 
     #[inline]
@@ -303,7 +346,7 @@ impl BoardData {
         let piece = self.mailbox[square as usize];
         set_0_at_index(square, &mut self.bitboards[piece as usize]);
         self.mailbox[square as usize] = pieces::NOPIECE;
-        // update zobrist key by XOR with piece
+        self.zobrist_key ^= ZOBRIST_TABLES.piecesquares[square as usize][piece as usize];
     }
 }
 
@@ -313,6 +356,7 @@ pub struct StateData {
     passant_square: Option<u8>,
     castlemask: u8,
     halfmove_ctr: u8,
+    zobrist_key: u64,
 }
 
 impl StateData {
@@ -322,6 +366,7 @@ impl StateData {
             passant_square: board.passant_square,
             castlemask: board.castle_rights_mask,
             halfmove_ctr: board.half_move_counter,
+            zobrist_key: board.zobrist_key,
         }
     }
 
@@ -334,5 +379,6 @@ impl StateData {
         board.castle_rights_mask = self.castlemask;
         board.passant_square = self.passant_square;
         board.half_move_counter = self.halfmove_ctr;
+        board.zobrist_key = self.zobrist_key;
     }
 }

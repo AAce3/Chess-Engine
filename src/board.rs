@@ -131,7 +131,7 @@ impl BoardData {
         let mut key = 0;
         for (square, piece) in self.mailbox.iter().enumerate() {
             if *piece != pieces::NOPIECE {
-                key ^= ZOBRIST_TABLES.piecesquares[*piece as usize][square];
+                key ^= ZOBRIST_TABLES.piecesquares[square][*piece as usize];
             }
         }
 
@@ -191,11 +191,16 @@ pub struct Zobrist {
     pub to_move: u64, // is xor'd if it is white to move
 }
 
+
 lazy_static! {
     pub static ref ZOBRIST_TABLES: Zobrist = generate_zobrist();
 }
 
 fn generate_zobrist() -> Zobrist {
+    unsafe {
+        SEED = 1804289383;
+    }
+    // seed is reset
     let mut newzobrist = Zobrist {
         piecesquares: Box::new([[0; 12]; 64]),
         passant_square: Box::new([0; 8]),
