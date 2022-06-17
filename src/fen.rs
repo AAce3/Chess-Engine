@@ -55,7 +55,7 @@ impl BoardData {
         val.pop();
         val.remove(0);
 
-        let tomove = if self.is_white_move {"w"} else {"b"};
+        let tomove = if self.to_move {"w"} else {"b"};
         let passant = match self.passant_square {
             Some(sqr) => idx_to_coordsquare(sqr),
             None => String::from("-"),
@@ -179,16 +179,18 @@ pub fn from_fen(fen_string: &str) -> BoardData {
     let half_move_ctr = fen_board[5].parse().unwrap();
 
     let mut new_board = BoardData {
-        is_white_move: to_move,
+        to_move,
         bitboards: bit_boards,
         mailbox: [0; 64],
         passant_square: sqr_to_index(fen_board[3]),
         castle_rights_mask: base_mask,
         half_move_counter: half_move_ctr,
-        prev_move_data: Vec::new(),
+        zobrist_key: 0, // do this later
+        prev_states: Vec::new(),
     };
 
     new_board.set_mailbox();
+    new_board.generate_zobristkey();
     new_board
 }
 
