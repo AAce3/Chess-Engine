@@ -4,7 +4,9 @@
 mod bit_operations;
 mod board;
 mod fen;
-mod move_generation; // generating bitboards
+mod bitboard_gen; // generating bitboards
+mod movegen;
+mod action;
 
 fn main() {
 
